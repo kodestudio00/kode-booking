@@ -37,6 +37,12 @@
       tagline: 'Book a session with our team',
       currency: '$',
 
+      // ---- Paste your Supabase details here ----
+      // Settings → API in your Supabase project.
+      // Without these, bookings only save in this one browser (testing only).
+      supabaseUrl: 'https://YOUR-PROJECT-REF.supabase.co',
+      supabaseKey: 'sb_publishable_YOUR_KEY_HERE',
+
       services: [
         { id: 'consult', name: 'Free Consultation', duration: 30, price: 0 },
         { id: 'design',  name: 'Design Session',     duration: 60, price: 75 },

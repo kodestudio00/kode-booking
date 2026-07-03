@@ -49,48 +49,121 @@
     currency: '$',
 
     // Called with the finished booking object after the user confirms.
-    // Wire this up to your backend / email service. See README.
+    // Wire this up to an email service if you want notifications. See README.
     onBooked: null,
 
-    // Storage namespace (localStorage) — change if you run multiple
-    // widgets on one domain and want separate booking logs.
+    // ---- Backend (recommended for a live site) ----
+    // Set both of these (from Supabase → Settings → API) to store real
+    // bookings in a database that prevents double-booking across every
+    // visitor and device. Leave both blank to fall back to localStorage,
+    // which only works for testing in a single browser.
+    supabaseUrl: '',   // e.g. 'https://xxxxxxxxxxxxx.supabase.co'
+    supabaseKey: '',   // the "Publishable key" (sb_publishable_...) — safe to put here
+
+    // Storage namespace for the localStorage fallback only.
     storageKey: 'kode_booking_demo',
   };
 
   /* ------------------------------------------------------------------ *
-   * 2. STORAGE — swap this out for a real API call in production.
-   *    See README "Connecting a real backend" section.
+   * 2. STORAGE
+   *
+   *    If cfg.supabaseUrl + cfg.supabaseKey are set, bookings go to a
+   *    real Supabase database — a unique constraint on (date, time)
+   *    means the database itself refuses double-bookings, even if two
+   *    people submit at the same instant.
+   *
+   *    If they're not set, falls back to localStorage (single-browser
+   *    demo mode only — fine for testing, not for a live site).
    * ------------------------------------------------------------------ */
   const Store = {
+    _mode: 'local',
+    _url: '',
+    _key: '',
     _mem: [],
-    _key: 'kode_booking_demo',
+    _localKey: 'kode_booking_demo',
 
-    init(key) {
-      this._key = key;
+    init(cfg) {
+      if (cfg.supabaseUrl && cfg.supabaseKey) {
+        this._mode = 'supabase';
+        this._url = cfg.supabaseUrl.replace(/\/$/, '');
+        this._key = cfg.supabaseKey;
+        return;
+      }
+      this._mode = 'local';
+      this._localKey = cfg.storageKey;
       try {
-        const raw = window.localStorage.getItem(this._key);
+        const raw = window.localStorage.getItem(this._localKey);
         this._mem = raw ? JSON.parse(raw) : [];
       } catch (e) {
         this._mem = []; // localStorage unavailable (privacy mode, sandboxed iframe, etc.)
       }
     },
 
-    getAll() {
-      return this._mem.slice();
+    /** Returns an array of taken "HH:MM" time strings for one date. */
+    async getTakenSlots(dateStr) {
+      if (this._mode === 'local') {
+        return this._mem.filter((b) => b.date === dateStr).map((b) => b.time);
+      }
+      const res = await fetch(`${this._url}/rest/v1/rpc/get_taken_slots`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: this._key,
+          Authorization: `Bearer ${this._key}`,
+        },
+        body: JSON.stringify({ for_date: dateStr }),
+      });
+      if (!res.ok) throw new Error('Could not load availability from Supabase.');
+      const rows = await res.json();
+      return rows.map((r) => r.booking_time);
     },
 
-    add(booking) {
-      this._mem.push(booking);
-      this._persist();
+    /**
+     * Attempts to save a booking. Returns { ok: true } on success, or
+     * { ok: false, reason: 'taken' | 'error' } — 'taken' means the
+     * database rejected it because that slot was just booked.
+     */
+    async add(booking) {
+      if (this._mode === 'local') {
+        if (this._mem.some((b) => b.date === booking.date && b.time === booking.time)) {
+          return { ok: false, reason: 'taken' };
+        }
+        this._mem.push(booking);
+        this._persistLocal();
+        return { ok: true };
+      }
+
+      const res = await fetch(`${this._url}/rest/v1/bookings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: this._key,
+          Authorization: `Bearer ${this._key}`,
+          Prefer: 'return=minimal',
+        },
+        body: JSON.stringify({
+          ref: booking.ref,
+          service_id: booking.serviceId,
+          service_name: booking.serviceName,
+          duration: booking.duration,
+          price: booking.price,
+          booking_date: booking.date,
+          booking_time: booking.time,
+          customer_name: booking.name,
+          customer_email: booking.email,
+          customer_phone: booking.phone,
+          notes: booking.notes,
+        }),
+      });
+
+      if (res.status === 409) return { ok: false, reason: 'taken' };
+      if (!res.ok) return { ok: false, reason: 'error' };
+      return { ok: true };
     },
 
-    isSlotTaken(dateStr, timeStr) {
-      return this._mem.some((b) => b.date === dateStr && b.time === timeStr);
-    },
-
-    _persist() {
+    _persistLocal() {
       try {
-        window.localStorage.setItem(this._key, JSON.stringify(this._mem));
+        window.localStorage.setItem(this._localKey, JSON.stringify(this._mem));
       } catch (e) {
         /* ignore — booking still works for this session */
       }
@@ -189,7 +262,7 @@
   function Widget(root, userConfig) {
     const cfg = Object.assign({}, DEFAULT_CONFIG, userConfig);
     cfg.workingHours = Object.assign({}, DEFAULT_CONFIG.workingHours, userConfig && userConfig.workingHours);
-    Store.init(cfg.storageKey);
+    Store.init(cfg);
 
     const state = {
       step: 1, // 1 service, 2 date/time, 3 details, 4 confirmation
@@ -197,9 +270,14 @@
       viewMonth: (() => { const d = new Date(); d.setDate(1); return d; })(),
       selectedDate: null, // Date object
       selectedSlot: null, // { label, value }
+      takenSlots: [],      // "HH:MM" strings already booked on selectedDate
+      loadingSlots: false,
+      slotsError: false,
       customer: { name: '', email: '', phone: '', notes: '' },
       lastBooking: null,
+      submitting: false,
     };
+    let dateRequestToken = 0; // guards against a slow, stale fetch overwriting a newer one
 
     root.innerHTML = '';
     const el = document.createElement('div');
@@ -294,10 +372,14 @@
       const canGoPrev = !(year === today.getFullYear() && month === today.getMonth());
 
       let slotsHtml = '';
-      if (state.selectedDate) {
+      if (state.selectedDate && state.loadingSlots) {
+        slotsHtml = `<p class="kb-empty-note">// loading available times…</p>`;
+      } else if (state.selectedDate && state.slotsError) {
+        slotsHtml = `<p class="kb-empty-note">// couldn't load availability — check your connection and try the date again</p>`;
+      } else if (state.selectedDate) {
         cfg._selectedDuration = state.service ? state.service.duration : cfg.slotIntervalMinutes;
         const slots = buildSlotsForDate(state.selectedDate, cfg).filter(
-          (sl) => !Store.isSlotTaken(toDateStr(state.selectedDate), sl.value)
+          (sl) => !state.takenSlots.includes(sl.value)
         );
         if (slots.length === 0) {
           slotsHtml = `<p class="kb-empty-note">// no times available this day — try another date</p>`;
@@ -403,8 +485,8 @@
       if (state.step === 3) {
         return `
           <div class="kb-footer">
-            <button type="button" class="kb-btn kb-btn-ghost" data-action="back">Back</button>
-            <button type="button" class="kb-btn kb-btn-primary" data-action="confirm">Confirm booking</button>
+            <button type="button" class="kb-btn kb-btn-ghost" data-action="back" ${state.submitting ? 'disabled' : ''}>Back</button>
+            <button type="button" class="kb-btn kb-btn-primary" data-action="confirm" ${state.submitting ? 'disabled' : ''}>${state.submitting ? 'Booking…' : 'Confirm booking'}</button>
           </div>
         `;
       }
@@ -439,7 +521,26 @@
           const [y, m, d] = btn.dataset.date.split('-').map(Number);
           state.selectedDate = new Date(y, m - 1, d);
           state.selectedSlot = null;
+          state.takenSlots = [];
+          state.slotsError = false;
+          state.loadingSlots = true;
           render();
+
+          const myToken = ++dateRequestToken;
+          const dateStr = toDateStr(state.selectedDate);
+          Store.getTakenSlots(dateStr)
+            .then((taken) => {
+              if (myToken !== dateRequestToken) return; // a newer date was picked meanwhile
+              state.takenSlots = taken;
+              state.loadingSlots = false;
+              render();
+            })
+            .catch(() => {
+              if (myToken !== dateRequestToken) return;
+              state.loadingSlots = false;
+              state.slotsError = true;
+              render();
+            });
         });
       });
 
@@ -462,8 +563,9 @@
       const restartBtn = el.querySelector('[data-action="restart"]');
       if (restartBtn) restartBtn.addEventListener('click', () => {
         state.step = 1; state.service = null; state.selectedDate = null;
-        state.selectedSlot = null; state.customer = { name: '', email: '', phone: '', notes: '' };
-        state.lastBooking = null; render();
+        state.selectedSlot = null; state.takenSlots = []; state.loadingSlots = false;
+        state.slotsError = false; state.customer = { name: '', email: '', phone: '', notes: '' };
+        state.lastBooking = null; state.submitting = false; render();
       });
 
       const icsBtn = el.querySelector('[data-action="ics"]');
@@ -476,7 +578,9 @@
       });
     }
 
-    function onConfirm() {
+    async function onConfirm() {
+      if (state.submitting) return;
+
       const { name, email } = state.customer;
       let valid = true;
 
@@ -488,16 +592,7 @@
       if (!name.trim() || !emailOk) valid = false;
       if (!valid) return;
 
-      // Re-check the slot hasn't been taken since it was selected
       const dateStr = toDateStr(state.selectedDate);
-      if (Store.isSlotTaken(dateStr, state.selectedSlot.value)) {
-        alert('Sorry, that slot was just booked by someone else. Please pick another time.');
-        state.selectedSlot = null;
-        state.step = 2;
-        render();
-        return;
-      }
-
       const booking = {
         ref: 'KB-' + Math.random().toString(36).slice(2, 8).toUpperCase(),
         serviceId: state.service.id,
@@ -514,7 +609,44 @@
         createdAt: new Date().toISOString(),
       };
 
-      Store.add(booking);
+      state.submitting = true;
+      render();
+
+      let result;
+      try {
+        result = await Store.add(booking);
+      } catch (e) {
+        result = { ok: false, reason: 'error' };
+      }
+
+      state.submitting = false;
+
+      // The database itself enforces uniqueness on (date, time), so this
+      // is the authoritative check — not a pre-check that could race.
+      if (!result.ok && result.reason === 'taken') {
+        alert('Sorry, that slot was just booked by someone else. Please pick another time.');
+        state.selectedSlot = null;
+        state.step = 2;
+        render();
+        // refresh the slot list for this date so the taken one disappears
+        const myToken = ++dateRequestToken;
+        state.loadingSlots = true;
+        render();
+        Store.getTakenSlots(dateStr).then((taken) => {
+          if (myToken !== dateRequestToken) return;
+          state.takenSlots = taken;
+          state.loadingSlots = false;
+          render();
+        });
+        return;
+      }
+
+      if (!result.ok) {
+        alert("Sorry, something went wrong saving your booking. Please check your connection and try again.");
+        render();
+        return;
+      }
+
       state.lastBooking = booking;
       state.step = 4;
       render();
@@ -537,12 +669,11 @@
       }
       return new Widget(root, userConfig || {});
     },
-    /** Read all bookings currently stored (for a simple admin view). */
-    getBookings(storageKey) {
-      Store.init(storageKey || DEFAULT_CONFIG.storageKey);
-      return Store.getAll();
-    },
   };
+  // Note: with Supabase configured, view your bookings in the Supabase
+  // dashboard's Table Editor — the widget deliberately can't read them
+  // back out (customer names/emails/phones are not publicly readable,
+  // by design — see supabase-setup.sql).
 
   window.KodeBooking = KodeBooking;
 })(window);

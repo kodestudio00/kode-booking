@@ -60,66 +60,45 @@ Everything is one config object passed to `KodeBooking.init()`:
 | `onBooked` | Function called with the finished booking object — this is your hook into email/backend, see below |
 | `storageKey` | Namespace for where bookings are stored locally (see below) |
 
-## 3. Important — read this before going live
+## 3. Backend — double-booking prevention (Supabase)
 
-Out of the box, the widget stores bookings in the visitor's own browser
-(`localStorage`) purely so the demo works with **zero setup**: double-booking
-prevention, the calendar of taken slots, etc. all work correctly for one
-visitor in one browser.
+By default, if you leave `supabaseUrl` / `supabaseKey` blank, bookings only
+save in the visitor's own browser (`localStorage`) — fine for testing, but
+two different customers on two different devices could grab the same slot,
+since neither browser knows about the other's booking.
 
-**This does not sync between visitors or devices.** Two different customers
-on two different phones won't see each other's bookings, so they *could*
-both grab the same slot. For a real, live booking page you need a small
-backend to be the single source of truth. You have two easy paths:
+Setting `supabaseUrl` and `supabaseKey` switches the widget to a real
+Supabase (Postgres) database with a **unique constraint on (date, time)** —
+the database itself physically refuses a duplicate booking, even if two
+people submit at the exact same second. This is already wired up:
 
-### Option A — quickest: a form/email service (no server code)
-Use something like **Formspree**, **EmailJS**, or **Getform** to email you
-(and optionally the customer) the moment a booking is confirmed. Wire it up
-inside `onBooked`:
+1. Run `supabase-setup.sql` once in your Supabase project's SQL Editor —
+   it creates the `bookings` table, the uniqueness rule, and locks the
+   table down with Row Level Security so visitors can create bookings but
+   can never read anyone else's name, email, or phone number.
+2. Copy your **Project URL** and **Publishable key** from
+   Settings → API in Supabase.
+3. Paste them into `supabaseUrl` / `supabaseKey` in `index.html`.
 
-```js
-onBooked: function (booking) {
-  fetch('https://formspree.io/f/your-form-id', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(booking),
-  });
-}
-```
+That's it — no server to run, no separate hosting. The widget talks
+directly to Supabase's REST API over HTTPS.
 
-This gets you email notifications quickly, but it won't stop double-booking
-across devices — good for a low-traffic business getting started.
+**Viewing your bookings:** open your Supabase project → **Table Editor** →
+`bookings`. That's the one place full customer details (name, email, phone)
+are visible — the public widget deliberately can't read them back out.
 
-### Option B — proper fix: a tiny backend
-Stand up a small API (a few endpoints: `GET /availability`, `POST /bookings`)
-backed by a database — **Supabase**, **Firebase**, or your own Node/PHP
-server all work fine. Then:
+**Email confirmations:** Supabase doesn't send emails on its own. The
+cleanest way to add them is a small **Supabase Edge Function** triggered on
+insert, or a service like Resend/Postmark called from that function. Ask me
+when you're ready and I'll write it — it plugs into what's already here
+without changing the widget itself.
 
-1. Replace the `Store` object at the top of `booking-widget.js` — swap
-   `isSlotTaken` and `add` for `fetch()` calls to your API instead of
-   `localStorage`.
-2. Your server checks for conflicts before saving, so two people truly can't
-   grab the same slot.
-3. Send confirmation emails from the server (e.g. with Resend, Postmark, or
-   SendGrid) right after saving.
+**If you ever want to swap Supabase for something else** (your own Node
+server, Firebase, etc.), all backend logic lives in one `Store` object near
+the top of `booking-widget.js` — the rest of the widget only ever calls
+`Store.getTakenSlots()` and `Store.add()`, so a future swap stays contained.
 
-I kept the storage logic in one small `Store` object specifically so this
-swap is contained — you shouldn't need to touch the rendering code at all.
-
-Happy to build out either option with you when you're ready — just tell me
-which one fits your setup (e.g. what you're hosting the site on) and I'll
-write the actual backend code.
-
-## 4. Viewing bookings stored locally (for testing)
-
-While you're testing with the default `localStorage` mode, you can inspect
-what's been booked from the browser console:
-
-```js
-KodeBooking.getBookings(); // returns an array of booking objects
-```
-
-## 5. Customizing the look
+## 4. Customizing the look
 
 All colors, spacing and fonts are CSS custom properties at the top of
 `.kb-widget` in `booking-widget.css` — e.g. `--kb-accent`, `--kb-bg`,
