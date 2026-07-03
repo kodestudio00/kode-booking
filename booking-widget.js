@@ -57,8 +57,8 @@
     // bookings in a database that prevents double-booking across every
     // visitor and device. Leave both blank to fall back to localStorage,
     // which only works for testing in a single browser.
-    supabaseUrl: '',   // e.g. 'https://xxxxxxxxxxxxx.supabase.co'
-    supabaseKey: '',   // the "Publishable key" (sb_publishable_...) — safe to put here
+    supabaseUrl: 'https://dnplselydxmxbutthiyh.supabase.co',   // e.g. 'https://xxxxxxxxxxxxx.supabase.co'
+    supabaseKey: 'sb_publishable_jeo16w3K6kNBbv7d65U2Zw_4NJOsngX',   // the "Publishable key" (sb_publishable_...) — safe to put here
 
     // Storage namespace for the localStorage fallback only.
     storageKey: 'kode_booking_demo',
