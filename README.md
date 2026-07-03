@@ -98,7 +98,74 @@ server, Firebase, etc.), all backend logic lives in one `Store` object near
 the top of `booking-widget.js` — the rest of the widget only ever calls
 `Store.getTakenSlots()` and `Store.add()`, so a future swap stays contained.
 
-## 4. Customizing the look
+## 5. Email confirmations (EmailJS)
+
+The widget now sends a real confirmation email the moment a booking is
+made, using **EmailJS** — no server required, works from a static GitHub
+Pages site. The email includes a one-tap **"Add to Google Calendar"** link
+that opens the calendar app directly on a phone, instead of downloading a
+file.
+
+**Setup (about 10 minutes):**
+
+1. Go to [emailjs.com](https://www.emailjs.com) and sign up free (200
+   emails/month on the free plan — plenty for a small business starting out).
+2. **Add an email service:** Email Services → Add New Service → connect
+   your Gmail (or whichever inbox you want confirmations to send from).
+   Note the **Service ID** it gives you.
+3. **Create a template:** Email Templates → Create New Template. Set the
+   "To email" field to `{{to_email}}`, and write the email body using these
+   variables (they're filled in automatically per booking):
+
+   | Variable | What it is |
+   |---|---|
+   | `{{to_name}}` | Customer's name |
+   | `{{service_name}}` | The service booked |
+   | `{{date_label}}` | e.g. "Tuesday, July 14" |
+   | `{{time_label}}` | e.g. "2:30 PM" |
+   | `{{ref}}` | Booking reference code |
+   | `{{business_name}}` | Your business name |
+   | `{{calendar_link}}` | The Google Calendar "add event" link |
+
+   Example template body:
+   ```
+   Hi {{to_name}},
+
+   You're booked in with {{business_name}}!
+
+   Service: {{service_name}}
+   Date: {{date_label}}
+   Time: {{time_label}}
+   Reference: {{ref}}
+
+   Add this to your calendar: {{calendar_link}}
+
+   See you then!
+   ```
+   Note the **Template ID** it gives you.
+4. **Get your Public Key:** Account → General → find your **Public Key**.
+5. Paste all three into `index.html`, near the top of the `<script>` block:
+   ```js
+   const EMAILJS_PUBLIC_KEY = 'your-public-key';
+   const EMAILJS_SERVICE_ID = 'your-service-id';
+   const EMAILJS_TEMPLATE_ID = 'your-template-id';
+   ```
+
+That's it — every confirmed booking will now trigger a real email.
+
+**Want you (the business owner) notified too, not just the customer?**
+Easiest way: create a second EmailJS template with your own address instead
+of `{{to_email}}`, and call `emailjs.send()` a second time inside
+`onBooked` with that template's ID.
+
+**About the calendar link:** the email includes a **Google Calendar** link
+because it works reliably across Android and iPhone without any file
+downloads — tapping it opens the Calendar app with the event pre-filled.
+Customers on Apple Calendar or Outlook can still use the **"Download the
+invite file"** link shown on the in-browser confirmation screen, which
+uses the standard `.ics` format those apps open natively.
+
+## 6. Customizing the look
 
 All colors, spacing and fonts are CSS custom properties at the top of
 `.kb-widget` in `booking-widget.css` — e.g. `--kb-accent`, `--kb-bg`,

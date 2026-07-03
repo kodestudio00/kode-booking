@@ -244,6 +244,27 @@
     ].join('\r\n');
   }
 
+  /**
+   * A Google Calendar "add event" link — tapping it on a phone opens the
+   * Calendar app directly with the event pre-filled (one tap to save),
+   * instead of downloading a file. This is what goes in the confirmation
+   * screen and the email.
+   */
+  function buildGoogleCalendarLink(booking, cfg) {
+    const [y, mo, d] = booking.date.split('-').map(Number);
+    const { h, m } = parseTime(booking.time);
+    const start = new Date(y, mo - 1, d, h, m);
+    const end = new Date(start.getTime() + booking.duration * 60000);
+    const fmt = (dt) => `${dt.getFullYear()}${pad2(dt.getMonth()+1)}${pad2(dt.getDate())}T${pad2(dt.getHours())}${pad2(dt.getMinutes())}00`;
+    const params = new URLSearchParams({
+      action: 'TEMPLATE',
+      text: `${booking.serviceName} — ${cfg.businessName}`,
+      dates: `${fmt(start)}/${fmt(end)}`,
+      details: `Booking with ${cfg.businessName} for ${booking.name}. Reference: ${booking.ref}`,
+    });
+    return `https://calendar.google.com/calendar/render?${params.toString()}`;
+  }
+
   function downloadIcs(booking, cfg) {
     const blob = new Blob([buildIcs(booking, cfg)], { type: 'text/calendar' });
     const url = URL.createObjectURL(blob);
@@ -492,9 +513,10 @@
       }
       return `
         <div class="kb-footer">
-          <button type="button" class="kb-btn kb-btn-ghost" data-action="ics">Add to calendar</button>
+          <button type="button" class="kb-btn kb-btn-ghost" data-action="gcal">Add to Google Calendar</button>
           <button type="button" class="kb-btn kb-btn-primary" data-action="restart">Book another</button>
         </div>
+        <p class="kb-ics-fallback"><button type="button" class="kb-link-btn" data-action="ics">Use Apple Calendar or Outlook instead? Download the invite file</button></p>
       `;
     }
 
@@ -566,6 +588,11 @@
         state.selectedSlot = null; state.takenSlots = []; state.loadingSlots = false;
         state.slotsError = false; state.customer = { name: '', email: '', phone: '', notes: '' };
         state.lastBooking = null; state.submitting = false; render();
+      });
+
+      const gcalBtn = el.querySelector('[data-action="gcal"]');
+      if (gcalBtn) gcalBtn.addEventListener('click', () => {
+        window.open(buildGoogleCalendarLink(state.lastBooking, cfg), '_blank', 'noopener');
       });
 
       const icsBtn = el.querySelector('[data-action="ics"]');

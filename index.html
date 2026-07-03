@@ -11,6 +11,9 @@
 
 <link rel="stylesheet" href="booking-widget.css">
 
+<!-- EmailJS lets this static page send real emails with no server. -->
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+
 <style>
   /* Page chrome — NOT part of the widget. Style your own site however you like;
      the widget is fully self-contained and won't be affected by your site's CSS. */
@@ -32,6 +35,34 @@
 
   <script src="booking-widget.js"></script>
   <script>
+    // ---- EmailJS setup ----
+    // Fill these in from your EmailJS account (see README.md, section 5).
+    const EMAILJS_PUBLIC_KEY = 'YOUR_PUBLIC_KEY';
+    const EMAILJS_SERVICE_ID = 'YOUR_SERVICE_ID';
+    const EMAILJS_TEMPLATE_ID = 'YOUR_TEMPLATE_ID';
+
+    if (window.emailjs && EMAILJS_PUBLIC_KEY !== 'YOUR_PUBLIC_KEY') {
+      emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
+    }
+
+    // Builds the same kind of "tap to add" Google Calendar link the widget
+    // uses on its own confirmation screen, so the email offers the same thing.
+    function buildGoogleCalendarLink(booking, businessName) {
+      const [y, mo, d] = booking.date.split('-').map(Number);
+      const [h, m] = booking.time.split(':').map(Number);
+      const start = new Date(y, mo - 1, d, h, m);
+      const end = new Date(start.getTime() + booking.duration * 60000);
+      const pad = (n) => String(n).padStart(2, '0');
+      const fmt = (dt) => `${dt.getFullYear()}${pad(dt.getMonth()+1)}${pad(dt.getDate())}T${pad(dt.getHours())}${pad(dt.getMinutes())}00`;
+      const params = new URLSearchParams({
+        action: 'TEMPLATE',
+        text: `${booking.serviceName} — ${businessName}`,
+        dates: `${fmt(start)}/${fmt(end)}`,
+        details: `Booking with ${businessName} for ${booking.name}. Reference: ${booking.ref}`,
+      });
+      return `https://calendar.google.com/calendar/render?${params.toString()}`;
+    }
+
     KodeBooking.init('#kode-booking', {
       businessName: 'Kode Studio',
       tagline: 'Book a session with our team',
@@ -40,8 +71,8 @@
       // ---- Paste your Supabase details here ----
       // Settings → API in your Supabase project.
       // Without these, bookings only save in this one browser (testing only).
-      supabaseUrl: 'https://dnplselydxmxbutthiyh.supabase.co',
-      supabaseKey: 'sb_publishable_jeo16w3K6kNBbv7d65U2Zw_4NJOsngX',
+      supabaseUrl: 'https://YOUR-PROJECT-REF.supabase.co',
+      supabaseKey: 'sb_publishable_YOUR_KEY_HERE',
 
       services: [
         { id: 'consult', name: 'Free Consultation', duration: 30, price: 0 },
@@ -63,10 +94,32 @@
       minNoticeHours: 2,
       maxAdvanceDays: 45,
 
-      // This runs the moment a booking is confirmed — this is where you'd
-      // send it to your own backend / email service. See README.md.
+      // Runs the moment a booking is confirmed — sends the customer (and
+      // optionally you) a real email via EmailJS, with a one-tap Google
+      // Calendar link instead of a file to download.
       onBooked: function (booking) {
         console.log('New booking:', booking);
+
+        if (!window.emailjs || EMAILJS_PUBLIC_KEY === 'YOUR_PUBLIC_KEY') {
+          console.warn('EmailJS not configured yet — skipping email send. See README.md, section 5.');
+          return;
+        }
+
+        const dateObj = new Date(booking.date + 'T00:00:00');
+        const dateLabel = dateObj.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+
+        emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+          to_name: booking.name,
+          to_email: booking.email,
+          service_name: booking.serviceName,
+          date_label: dateLabel,
+          time_label: booking.timeLabel,
+          ref: booking.ref,
+          business_name: 'Kode Studio',
+          calendar_link: buildGoogleCalendarLink(booking, 'Kode Studio'),
+        }).catch(function (err) {
+          console.error('Confirmation email failed to send:', err);
+        });
       },
     });
   </script>
