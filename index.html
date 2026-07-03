@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Kode Studio — Book a Session</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="booking-widget.css">
+
+<style>
+  /* Page chrome — NOT part of the widget. Style your own site however you like;
+     the widget is fully self-contained and won't be affected by your site's CSS. */
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 16px;
+    background: #0b0c12;
+    font-family: 'Inter', sans-serif;
+  }
+</style>
+</head>
+<body>
+
+  <div id="kode-booking"></div>
+
+  <script src="booking-widget.js"></script>
+  <script>
+    KodeBooking.init('#kode-booking', {
+      businessName: 'Kode Studio',
+      tagline: 'Book a session with our team',
+      currency: '$',
+
+      services: [
+        { id: 'consult', name: 'Free Consultation', duration: 30, price: 0 },
+        { id: 'design',  name: 'Design Session',     duration: 60, price: 75 },
+        { id: 'build',   name: 'Build & Review',     duration: 90, price: 120 },
+      ],
+
+      workingHours: {
+        0: null,                              // Sunday — closed
+        1: { start: '09:00', end: '17:00' },  // Monday
+        2: { start: '09:00', end: '17:00' },
+        3: { start: '09:00', end: '17:00' },
+        4: { start: '09:00', end: '17:00' },
+        5: { start: '09:00', end: '15:00' },  // Friday — shorter day
+        6: null,                              // Saturday — closed
+      },
+
+      slotIntervalMinutes: 30,
+      minNoticeHours: 2,
+      maxAdvanceDays: 45,
+
+      // This runs the moment a booking is confirmed — this is where you'd
+      // send it to your own backend / email service. See README.md.
+      onBooked: function (booking) {
+        console.log('New booking:', booking);
+      },
+    });
+  </script>
+</body>
+</html>
